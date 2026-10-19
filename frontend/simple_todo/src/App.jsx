@@ -4,7 +4,8 @@ import { GoogleOAuthProvider, useGoogleLogin } from '@react-oauth/google'
 
 const API = "https://fast-api-small-project.onrender.com"
 
-
+// Items that are still being saved have a temporary string id (e.g. "temp-123")
+const isPending = (id) => typeof id === "string"
 
 function App() {
   const [loading, setLoading] = useState(true)
@@ -20,8 +21,6 @@ function App() {
   const [all_product, setAll_product] = useState([])
   const [filter, setFilter] = useState("all")
   const [itemError, setItemError] = useState("")
-  const [adding, setAdding] = useState(false)
-  const [clearing, setClearing] = useState(false)
 
   // ----------------- Google Login -----------------
   const handleGoogleSuccess = async (tokenResponse) => {
@@ -168,15 +167,28 @@ function App() {
       })
   }
 
+  // ----------------- Optimistic item actions -----------------
+  // Each action updates the UI immediately, then calls the API in the
+  // background. If the API call fails, the change is rolled back.
+
   const addItem = () => {
-    if (!data.title.trim() || adding) return
+    if (!data.title.trim()) return
     setItemError("")
-    setAdding(true)
+
+    const payload = data
+    const tempId = `temp-${Date.now()}-${Math.random()}`
+    const tempItem = { id: tempId, title: payload.title, completed: false }
+
+    // 1. update UI right away
+    setAll_product((prev) => [...prev, tempItem])
+    setData({ title: "", completed: false })
+
+    // 2. save in the background
     fetch(`${API}/`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify(data),
+      body: JSON.stringify(payload),
     })
       .then((res) => {
         if (res.status === 401) {
@@ -187,17 +199,33 @@ function App() {
         return res.json()
       })
       .then((res) => {
-        setAll_product([...all_product, res.item])
-        setData({ title: "", completed: false })
+        // swap the temporary item for the real one from the server
+        setAll_product((prev) =>
+          prev.map((it) => (it.id === tempId ? res.item : it))
+        )
       })
       .catch((err) => {
+        // roll back
+        setAll_product((prev) => prev.filter((it) => it.id !== tempId))
+        setData((cur) => (cur.title ? cur : payload))
         if (err.message !== "unauthorized") setItemError(err.message)
       })
-      .finally(() => setAdding(false))
   }
 
   const toggleItem = (id) => {
+    if (isPending(id)) return
+    const target = all_product.find((it) => it.id === id)
+    if (!target) return
     setItemError("")
+
+    const previous = target.completed
+
+    // 1. update UI right away
+    setAll_product((prev) =>
+      prev.map((it) => (it.id === id ? { ...it, completed: !previous } : it))
+    )
+
+    // 2. save in the background
     fetch(`${API}/${id}`, {
       method: "PUT",
       credentials: "include",
@@ -210,20 +238,26 @@ function App() {
         if (!res.ok) throw new Error("Failed to update item")
         return res.json()
       })
-      .then((res) => {
-        setAll_product((prev) =>
-          prev.map((it) =>
-            it.id === res.item.id ? { ...it, completed: res.item.completed } : it
-          )
-        )
-      })
       .catch((err) => {
+        // roll back
+        setAll_product((prev) =>
+          prev.map((it) => (it.id === id ? { ...it, completed: previous } : it))
+        )
         if (err.message !== "unauthorized") setItemError(err.message)
       })
   }
 
   const deleteItem = (id) => {
+    if (isPending(id)) return
+    const index = all_product.findIndex((it) => it.id === id)
+    if (index === -1) return
+    const removed = all_product[index]
     setItemError("")
+
+    // 1. update UI right away
+    setAll_product((prev) => prev.filter((it) => it.id !== id))
+
+    // 2. delete in the background
     fetch(`${API}/${id}`, {
       method: "DELETE",
       credentials: "include",
@@ -236,23 +270,46 @@ function App() {
         if (!res.ok) throw new Error("Failed to delete item")
         return res.json()
       })
-      .then(() => {
-        setAll_product((prev) => prev.filter((it) => it.id !== id))
-      })
       .catch((err) => {
+        // roll back: put the item back where it was
+        setAll_product((prev) => {
+          const copy = [...prev]
+          copy.splice(Math.min(index, copy.length), 0, removed)
+          return copy
+        })
         if (err.message !== "unauthorized") setItemError(err.message)
       })
   }
 
   const clearCompleted = () => {
-    const completed = all_product.filter((it) => it.completed)
-    if (completed.length === 0 || clearing) return
-    setClearing(true)
-    Promise.all(completed.map((it) =>
-      fetch(`${API}/${it.id}`, { method: "DELETE", credentials: "include" })
-    )).then(() => {
-      setAll_product((prev) => prev.filter((it) => !it.completed))
-    }).finally(() => setClearing(false))
+    const completed = all_product.filter((it) => it.completed && !isPending(it.id))
+    if (completed.length === 0) return
+    setItemError("")
+
+    // 1. update UI right away
+    const completedIds = new Set(completed.map((it) => it.id))
+    setAll_product((prev) => prev.filter((it) => !completedIds.has(it.id)))
+
+    // 2. delete in the background
+    Promise.allSettled(
+      completed.map((it) =>
+        fetch(`${API}/${it.id}`, { method: "DELETE", credentials: "include" })
+          .then((res) => {
+            if (!res.ok) throw new Error("Failed to delete item")
+            return it.id
+          })
+      )
+    ).then((results) => {
+      // roll back only the ones that failed
+      const failed = completed.filter((_, i) => results[i].status === "rejected")
+      if (failed.length > 0) {
+        setAll_product((prev) => [...prev, ...failed].sort((a, b) => {
+          if (isPending(a.id) || isPending(b.id)) return 0
+          return a.id - b.id
+        }))
+        setItemError(`Could not delete ${failed.length} item(s)`)
+      }
+    })
   }
 
   if (loading) {
@@ -382,10 +439,9 @@ function App() {
           value={data.title}
           className="todo-input"
           placeholder="What needs to be done?"
-          disabled={adding}
         />
-        <button type="submit" className="add-btn" disabled={adding}>
-          {adding ? "Adding..." : "Add"}
+        <button type="submit" className="add-btn">
+          Add
         </button>
       </form>
 
@@ -420,12 +476,17 @@ function App() {
           <li className="todo-empty">No tasks here yet</li>
         ) : (
           all_product?.map((item) => (
-            <li key={item.id} className="todo-item">
+            <li
+              key={item.id}
+              className="todo-item"
+              style={{ opacity: isPending(item.id) ? 0.6 : 1 }}
+            >
               <input
                 type="checkbox"
                 checked={item.completed}
                 className="todo-check"
                 onChange={() => toggleItem(item.id)}
+                disabled={isPending(item.id)}
               />
               <span
                 className="todo-text"
@@ -438,6 +499,7 @@ function App() {
                 type="button"
                 className="delete-btn"
                 aria-label="Delete task"
+                disabled={isPending(item.id)}
               >
                 ✕
               </button>
@@ -452,9 +514,8 @@ function App() {
           type="button"
           className="clear-btn"
           onClick={clearCompleted}
-          disabled={clearing}
         >
-          {clearing ? "Clearing..." : "Clear completed"}
+          Clear completed
         </button>
       </footer>
     </main>
