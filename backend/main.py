@@ -3,11 +3,7 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
-from google.cloud import bigquery
-from google.oauth2 import id_token
 from pydantic import BaseModel
-from sqlalchemy import null
-from google.auth.transport import requests as google_requests
 import requests
 import secrets
 
