@@ -177,7 +177,10 @@ async def authenticate(request: Request, call_next):
 # instead of a 401.
 
 # Get origins from environment variable or default to localhost
-allowed_origins = os.getenv("ALLOWED_ORIGINS", "https://fast-api-small-project.vercel.app").split(",")
+allowed_origins = os.getenv(
+    "ALLOWED_ORIGINS",
+    "http://localhost:5173,https://fast-api-small-project.vercel.app",
+).split(",")
 
 server.add_middleware(
     CORSMiddleware,
@@ -264,8 +267,8 @@ def google_login(
         key="access_token",
         value=access_token,
         httponly=True,
-        secure=False,  # Local HTTP only; use True with HTTPS in production
-        samesite="lax",
+        secure=True,  # required for cross-site cookies (HTTPS)
+        samesite="none",
         max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         path="/",
     )
@@ -475,8 +478,8 @@ def user_login(
         key="access_token",
         value=access_token,
         httponly=True,
-        secure=False,  # Local HTTP only; use True with HTTPS in production
-        samesite="lax",
+        secure=True,  # required for cross-site cookies (HTTPS)
+        samesite="none",
         max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         path="/",
     )
@@ -491,8 +494,8 @@ def logout(response: Response):
     response.delete_cookie(
         key="access_token",
         httponly=True,
-        secure=False,
-        samesite="lax",
+        secure=True,
+        samesite="none",
         path="/",
     )
 
