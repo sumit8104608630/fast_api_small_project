@@ -177,7 +177,7 @@ async def authenticate(request: Request, call_next):
 # instead of a 401.
 
 # Get origins from environment variable or default to localhost
-allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173").split(",")
+allowed_origins = os.getenv("ALLOWED_ORIGINS", "https://fast-api-small-project.vercel.app").split(",")
 
 server.add_middleware(
     CORSMiddleware,
