@@ -1,4 +1,6 @@
-
+import os
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 from google.cloud import bigquery
@@ -26,12 +28,13 @@ from model.user_pydantic import user_pydantic
 # ---------------- CONFIGURATION ----------------
 
 # Use a strong secret from an environment variable in production.
-SECRET_KEY = "sss81046"
+SECRET_KEY = os.getenv("SECRET_KEY", "sss81046")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 # Must match the clientId used by <GoogleOAuthProvider> in the frontend
-GOOGLE_CLIENT_ID = (
+GOOGLE_CLIENT_ID = os.getenv(
+    "GOOGLE_CLIENT_ID",
     "725060787408-t5gk57mdt1tnr0p8nm042fa9d3g9nj9e.apps.googleusercontent.com"
 )
 
@@ -104,6 +107,7 @@ async def authenticate(request: Request, call_next):
         "/openapi.json",
         "/redoc",
         "/google_login",
+        "/ping",  # keep-alive endpoint must be public
     }
 
     # Allow browser CORS preflight requests
@@ -176,11 +180,12 @@ async def authenticate(request: Request, call_next):
 # `authenticate` bypasses CORSMiddleware and the browser reports a CORS error
 # instead of a 401.
 
-origin = ["http://localhost:5173"]
+# Get origins from environment variable or default to localhost
+allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173").split(",")
 
 server.add_middleware(
     CORSMiddleware,
-    allow_origins=origin,
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -496,3 +501,32 @@ def logout(response: Response):
     )
 
     return {"message": "Logout successful"}
+
+
+# ---------------- PING ENDPOINT (KEEP-ALIVE) ----------------
+
+@server.get("/ping")
+def ping():
+    return {"status": "alive", "timestamp": datetime.now(timezone.utc)}
+
+
+# ---------------- KEEP-ALIVE (prevents Render from sleeping) ----------------
+
+RENDER_URL = os.getenv("RENDER_EXTERNAL_URL")  # set automatically by Render
+PING_INTERVAL_SECONDS = 10 * 60  # 10 minutes
+
+
+def keep_alive():
+    while True:
+        time.sleep(PING_INTERVAL_SECONDS)
+        try:
+            requests.get(f"{RENDER_URL}/ping", timeout=10)
+        except Exception as error:
+            print(f"Keep-alive ping failed: {error}")
+
+
+@server.on_event("startup")
+def start_keep_alive():
+    # Only runs on Render; skipped on your local machine
+    if RENDER_URL:
+        threading.Thread(target=keep_alive, daemon=True).start()

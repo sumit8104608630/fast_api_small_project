@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import './App.css'
 import { GoogleOAuthProvider, useGoogleLogin } from '@react-oauth/google'
 
-const API = "http://localhost:8000"
+const API = import.meta.env.VITE_API_URL || "http://localhost:8000"
 
 
 

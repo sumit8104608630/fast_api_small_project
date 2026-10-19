@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+gunicorn
+sqlalchemy
+psycopg2-binary
+pydantic
+pydantic-settings
+pyjwt
+pwdlib[argon2]
+google-auth
+requests
+python-multipart
+alembic
